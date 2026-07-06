@@ -7,6 +7,7 @@
  ============================================================================
  */
 
+#include <errno.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -126,6 +127,15 @@ hev_socks5_client_write_request (HevSocks5Client *self)
     klass = HEV_OBJECT_GET_CLASS (self);
     addr = klass->get_upstream_addr (self);
 
+    if (LOG_ON ()) {
+        const char *str;
+        char buf[272];
+
+        str = hev_socks5_addr_into_str (addr, buf, sizeof (buf));
+        LOG_I ("%p socks5 client request cmd=%u dst=%s", self, req.cmd,
+               str ? str : "(null)");
+    }
+
     switch (addr->atype) {
     case HEV_SOCKS5_ADDR_TYPE_IPV4:
         addrlen = 7;
@@ -149,7 +159,8 @@ hev_socks5_client_write_request (HevSocks5Client *self)
     ret = hev_task_io_socket_sendmsg (HEV_SOCKS5 (self)->fd, &mh, MSG_WAITALL,
                                       task_io_yielder, self);
     if (ret <= 0) {
-        LOG_I ("%p socks5 client write request", self);
+        LOG_I ("%p socks5 client write request ret=%d errno=%d %s", self, ret,
+               errno, strerror (errno));
         return -1;
     }
 
@@ -224,7 +235,8 @@ hev_socks5_client_read_response (HevSocks5Client *self)
     ret = hev_task_io_socket_recv (HEV_SOCKS5 (self)->fd, &res, 4, MSG_WAITALL,
                                    task_io_yielder, self);
     if (ret != 4) {
-        LOG_I ("%p socks5 client read response", self);
+        LOG_I ("%p socks5 client read response ret=%d errno=%d %s", self, ret,
+               errno, strerror (errno));
         return -1;
     }
 
@@ -272,7 +284,9 @@ hev_socks5_client_connect (HevSocks5Client *self, const char *addr, int port)
 {
     HevSocks5Class *klass;
     struct sockaddr_in6 saddr;
+    struct sockaddr_in saddr4;
     struct sockaddr *sap;
+    socklen_t salen;
     int addr_family;
     int timeout;
     int fd, res;
@@ -290,13 +304,26 @@ hev_socks5_client_connect (HevSocks5Client *self, const char *addr, int port)
         return -1;
     }
 
-    fd = hev_socks5_socket (SOCK_STREAM);
+    if ((addr_family == HEV_SOCKS5_ADDR_FAMILY_IPV4) &&
+        IN6_IS_ADDR_V4MAPPED (&saddr.sin6_addr)) {
+        memset (&saddr4, 0, sizeof (saddr4));
+        saddr4.sin_family = AF_INET;
+        saddr4.sin_port = saddr.sin6_port;
+        memcpy (&saddr4.sin_addr, &saddr.sin6_addr.s6_addr[12],
+                sizeof (saddr4.sin_addr));
+        sap = (struct sockaddr *)&saddr4;
+        salen = sizeof (saddr4);
+        fd = hev_socks5_socket_family (AF_INET, SOCK_STREAM);
+    } else {
+        sap = (struct sockaddr *)&saddr;
+        salen = sizeof (saddr);
+        fd = hev_socks5_socket_family (AF_INET6, SOCK_STREAM);
+    }
     if (fd < 0) {
         LOG_E ("%p socks5 client socket", self);
         return -1;
     }
 
-    sap = (struct sockaddr *)&saddr;
     klass = HEV_OBJECT_GET_CLASS (self);
     res = klass->binder (HEV_SOCKS5 (self), fd, sap);
     if (res < 0) {
@@ -306,10 +333,10 @@ hev_socks5_client_connect (HevSocks5Client *self, const char *addr, int port)
         return -1;
     }
 
-    res = hev_task_io_socket_connect (fd, sap, sizeof (saddr), task_io_yielder,
-                                      self);
+    res = hev_task_io_socket_connect (fd, sap, salen, task_io_yielder, self);
     if (res < 0) {
-        LOG_I ("%p socks5 client connect", self);
+        LOG_I ("%p socks5 client connect [%s]:%d errno=%d %s", self, addr,
+               port, errno, strerror (errno));
         hev_task_del_fd (hev_task_self (), fd);
         close (fd);
         return -1;

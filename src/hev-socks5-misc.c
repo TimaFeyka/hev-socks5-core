@@ -57,19 +57,21 @@ hev_socks5_task_io_yielder (HevTaskYieldType type, void *data)
 }
 
 int
-hev_socks5_socket (int type)
+hev_socks5_socket_family (int family, int type)
 {
     HevTask *task = hev_task_self ();
     int fd, res, zero = 0;
 
-    fd = hev_task_io_socket_socket (AF_INET6, type, 0);
+    fd = hev_task_io_socket_socket (family, type, 0);
     if (fd < 0)
         return -1;
 
-    res = setsockopt (fd, IPPROTO_IPV6, IPV6_V6ONLY, &zero, sizeof (zero));
-    if (res < 0) {
-        close (fd);
-        return -1;
+    if (family == AF_INET6) {
+        res = setsockopt (fd, IPPROTO_IPV6, IPV6_V6ONLY, &zero, sizeof (zero));
+        if (res < 0) {
+            close (fd);
+            return -1;
+        }
     }
 
     res = hev_task_add_fd (task, fd, POLLIN | POLLOUT);
@@ -82,6 +84,12 @@ hev_socks5_socket (int type)
     }
 
     return fd;
+}
+
+int
+hev_socks5_socket (int type)
+{
+    return hev_socks5_socket_family (AF_INET6, type);
 }
 
 const char *

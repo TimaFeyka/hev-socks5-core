@@ -23,6 +23,7 @@ extern "C" {
 #endif
 
 int hev_socks5_socket (int type);
+int hev_socks5_socket_family (int family, int type);
 
 const char *hev_socks5_addr_into_str (const HevSocks5Addr *addr, char *buf,
                                       int len);
